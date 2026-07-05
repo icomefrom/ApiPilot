@@ -1,0 +1,19 @@
+# 代码工具目录
+.codefuse/
+.idea/
+.vscode/
+
+# 项目构建依赖
+node_modules/
+dist/
+build/
+coverage/
+
+# 环境与日志
+.env
+.env.local
+*.log
+*.swp
+
+# Mac系统隐藏文件
+.DS_Store

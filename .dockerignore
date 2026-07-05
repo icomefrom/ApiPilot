@@ -1,0 +1,13 @@
+.git
+.github
+.codefuse
+.env
+.env.*
+!/.env.example
+frontend/node_modules
+frontend/dist
+backend/venv
+backend/__pycache__
+backend/**/*.pyc
+backend/db.sqlite3
+postgres_data
