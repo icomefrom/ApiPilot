@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+backend/db.sqlite3
+backend/venv/
+backend/staticfiles/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+.codefuse/
+
+# Runtime data
+postgres_data/
+ollama_data/
+*.log
