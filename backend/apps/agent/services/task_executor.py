@@ -386,7 +386,13 @@ def _run_agent_task(task_id_str, cancel_event):
 
         _check_cancelled(cancel_event, task)
 
-        # Stage 3: Dependency planning
+        # Stage 2.6: Start assertion model call in background (does NOT depend on dependency_plan)
+        model_future = ThreadPoolExecutor(max_workers=1).submit(
+            assertion_planner.start_model_assertions,
+            goal, steps, matches, response_samples, assertion_intents,
+        )
+
+        # Stage 3: Dependency planning (runs in parallel with assertion model call)
         _begin_stage(task, 'dependency_planning')
         dependency_plan, dependency_llm = dependency_planner.plan(steps, matches, response_samples=response_samples)
         context['dependency_plan'] = dependency_plan
@@ -399,14 +405,19 @@ def _run_agent_task(task_id_str, cancel_event):
 
         _check_cancelled(cancel_event, task)
 
-        # Stage 4: Assertion planning
+        # Stage 4: Assertion planning — merge model results (already computed) with rules
         _begin_stage(task, 'assertion_planning')
-        assertion_plan, assertion_llm = assertion_planner.plan(
-            steps, matches, dependency_plan=dependency_plan, response_samples=response_samples, goal=goal,
-            assertion_intents=assertion_intents,
+        try:
+            model_assertions, model_trace = model_future.result(timeout=300)
+        except Exception as exc:
+            logger.warning(f'[AgentTask] assertion model call failed: {exc}')
+            model_assertions, model_trace = [], {}
+        assertion_plan = assertion_planner.merge_assertions(
+            steps, matches, dependency_plan=dependency_plan, response_samples=response_samples,
+            model_assertions=model_assertions, assertion_intents=assertion_intents,
         )
         context['assertion_plan'] = assertion_plan
-        context['llm_trace']['assertion_planning'] = assertion_llm
+        context['llm_trace']['assertion_planning'] = model_trace
         _complete_stage(task, 'assertion_planning', {'items': assertion_plan})
 
         _check_cancelled(cancel_event, task)
@@ -635,7 +646,13 @@ def _run_agent_task_from_checkpoint(task_id_str, cancel_event):
 
         _check_cancelled(cancel_event, task)
 
-        # Stage 3: Dependency planning
+        # Stage 2.6: Start assertion model call in background
+        model_future = ThreadPoolExecutor(max_workers=1).submit(
+            assertion_planner.start_model_assertions,
+            goal, steps, matches, response_samples, [],
+        )
+
+        # Stage 3: Dependency planning (runs in parallel with assertion model call)
         _begin_stage(task, 'dependency_planning')
         dependency_plan, dependency_llm = dependency_planner.plan(steps, matches, response_samples=response_samples)
         parameter_requirements = parameter_inferer.infer(
@@ -646,13 +663,18 @@ def _run_agent_task_from_checkpoint(task_id_str, cancel_event):
 
         _check_cancelled(cancel_event, task)
 
-        # Stage 4: Assertion planning
+        # Stage 4: Assertion planning — merge model results with rules
         _begin_stage(task, 'assertion_planning')
-        assertion_plan, assertion_llm = assertion_planner.plan(
-            steps, matches, dependency_plan=dependency_plan, response_samples=response_samples, goal=goal,
-            assertion_intents=assertion_intents,
+        try:
+            model_assertions, model_trace = model_future.result(timeout=300)
+        except Exception as exc:
+            logger.warning(f'[AgentTask] (resume) assertion model call failed: {exc}')
+            model_assertions, model_trace = [], {}
+        assertion_plan = assertion_planner.merge_assertions(
+            steps, matches, dependency_plan=dependency_plan, response_samples=response_samples,
+            model_assertions=model_assertions, assertion_intents=[],
         )
-        llm_trace['assertion_planning'] = assertion_llm
+        llm_trace['assertion_planning'] = model_trace
         _complete_stage(task, 'assertion_planning', {'items': assertion_plan})
 
         _check_cancelled(cancel_event, task)
@@ -760,15 +782,17 @@ def _complete_stage(task, stage_key, output=None):
     if stage:
         task.progress = stage['end']
     step_results = task.step_results or {}
-    step_results[stage_key] = {
+    existing = step_results.get(stage_key, {})
+    existing.update({
         'status': 'completed',
         'progress': 100,
         'completed_at': datetime.now().isoformat(),
-    }
+    })
     # Store both lightweight summary (for progress display) and full output (for resume)
     if output is not None:
-        step_results[stage_key]['checkpoint'] = _make_checkpoint_summary(stage_key, output)
-        step_results[stage_key]['output'] = output
+        existing['checkpoint'] = _make_checkpoint_summary(stage_key, output)
+        existing['output'] = output
+    step_results[stage_key] = existing
     task.step_results = step_results
     task.save(update_fields=['progress', 'step_results'])
 

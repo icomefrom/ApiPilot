@@ -1,5 +1,9 @@
+import logging
+
 from apps.agent.prompts.interface_matching_prompt import build_messages
 from apps.agent.schemas.validators import validate_interface_match
+
+logger = logging.getLogger(__name__)
 
 
 class InterfaceMatcher:
@@ -9,17 +13,25 @@ class InterfaceMatcher:
     # 规则预选最低分数：低于此分数的候选不送入 LLM，避免无关候选干扰匹配
     MIN_CANDIDATE_PRE_SCORE = 0.01
 
+    # 名称匹配强度阈值：>= 此值直接跳过 LLM
+    FAST_MATCH_NAME_THRESHOLD = 0.80
+
     def match(self, steps, candidates_by_step):
-        compact_candidates = []
-        valid_ids = set()
+        """Match interfaces per-step with two-phase strategy.
+
+        Phase 1 (fast path): If a candidate's name strongly matches the step text
+        (exact name match or high semantic similarity), skip LLM entirely.
+
+        Phase 2 (batch LLM): Remaining unmatched steps are batched into a single
+        LLM call instead of N sequential calls, reducing total LLM round-trips.
+        """
+        # Build candidate index once (shared across steps)
         candidates_by_index = {}
         for item in candidates_by_step:
             candidates = []
             for candidate in item.get('candidates', []):
-                # 过滤掉极低分候选，减少 LLM 误选概率
                 if (candidate.get('pre_score') or 0) < self.MIN_CANDIDATE_PRE_SCORE:
                     continue
-                valid_ids.add(candidate['interface_id'])
                 candidates.append({
                     'interface_id': candidate['interface_id'],
                     'name': candidate.get('name'),
@@ -34,50 +46,215 @@ class InterfaceMatcher:
                     'score_reasons': candidate.get('score_reasons') or candidate.get('pre_reason') or [],
                 })
             candidates_by_index[item['step_index']] = candidates
-            compact_candidates.append({
+
+        by_id = self._candidate_map(candidates_by_step)
+        all_valid_ids = set()
+        for candidates in candidates_by_index.values():
+            for c in candidates:
+                all_valid_ids.add(c['interface_id'])
+
+        matches = []
+        llm_needed = []
+
+        # ── Phase 1: fast name-based match (no LLM) ──────────────────
+        for item in candidates_by_step:
+            step_index = item['step_index']
+            step_candidates = candidates_by_index.get(step_index, [])
+            if not step_candidates:
+                matches.append({
+                    'step_index': step_index,
+                    'selected_interface_id': None,
+                    'selected_interface': None,
+                    'confidence': 0,
+                    'reason': '无可用候选接口',
+                })
+                continue
+
+            fast = self._try_fast_name_match(step_index, item, step_candidates)
+            if fast:
+                matches.append(fast)
+            else:
+                llm_needed.append((item, step_candidates))
+
+        # ── Phase 2: batch LLM for remaining unmatched steps ─────────
+        provider_info = {'provider': 'unknown', 'model': 'unknown'}
+
+        if llm_needed:
+            batch_result = self._batch_llm_match(llm_needed)
+            provider_info = batch_result['provider_info']
+
+            for item, step_candidates in llm_needed:
+                step_index = item['step_index']
+                match_item = batch_result['step_matches'].get(step_index)
+
+                if not match_item:
+                    matches.append({
+                        'step_index': step_index,
+                        'selected_interface_id': None,
+                        'selected_interface': None,
+                        'confidence': 0,
+                        'reason': 'LLM 未返回匹配结果',
+                    })
+                    continue
+
+                selected_id = match_item.get('selected_interface_id')
+                if selected_id is not None and selected_id not in all_valid_ids:
+                    selected_id = None
+                candidate = by_id.get(selected_id) if selected_id is not None else None
+                confidence = float(match_item.get('confidence') or 0)
+                reason = match_item.get('reason') or ''
+
+                if selected_id is None:
+                    recommendation = self._recommend_top_candidate(step_index, candidates_by_index, reason)
+                    if recommendation:
+                        selected_id = recommendation['interface_id']
+                        candidate = by_id.get(selected_id)
+                        confidence = recommendation['confidence']
+                        reason = recommendation['reason']
+
+                correction = self._prefer_stronger_name_candidate(step_index, candidate, candidates_by_index)
+                if correction:
+                    selected_id = correction['interface_id']
+                    candidate = by_id.get(selected_id)
+                    confidence = correction['confidence']
+                    reason = correction['reason']
+
+                if candidate:
+                    candidate = {
+                        **candidate,
+                        'llm_confidence': confidence,
+                        'llm_reason': reason,
+                    }
+
+                matches.append({
+                    'step_index': step_index,
+                    'selected_interface_id': selected_id,
+                    'selected_interface': candidate,
+                    'confidence': confidence,
+                    'reason': reason,
+                })
+
+        # Sort by step_index for consistent ordering
+        matches.sort(key=lambda m: m['step_index'])
+        return matches, provider_info
+
+    # ------------------------------------------------------------------
+    # Batch LLM: send all unmatched steps in a single call
+    # ------------------------------------------------------------------
+
+    def _batch_llm_match(self, llm_needed):
+        """Send all unmatched steps to LLM in ONE call instead of N."""
+        compact = []
+        steps_for_prompt = []
+        for item, step_candidates in llm_needed:
+            compact.append({
                 'step_index': item['step_index'],
                 'step_text': item.get('step_text'),
                 'resolved_text': item.get('resolved_text'),
-                'candidates': candidates,
+                'candidates': step_candidates,
             })
-        result = self.llm.chat_json(build_messages(steps, compact_candidates), temperature=0.1)
-        data = validate_interface_match(result['data'])
-        by_id = self._candidate_map(candidates_by_step)
-        matches = []
-        for item in data.get('matches', []):
-            selected_id = item.get('selected_interface_id')
-            if selected_id is not None and selected_id not in valid_ids:
-                selected_id = None
-            candidate = by_id.get(selected_id) if selected_id is not None else None
-            confidence = float(item.get('confidence') or 0)
-            reason = item.get('reason') or ''
-            if selected_id is None:
-                recommendation = self._recommend_top_candidate(item.get('step_index'), candidates_by_index, reason)
-                if recommendation:
-                    selected_id = recommendation['interface_id']
-                    candidate = by_id.get(selected_id)
-                    confidence = recommendation['confidence']
-                    reason = recommendation['reason']
-            correction = self._prefer_stronger_name_candidate(item.get('step_index'), candidate, candidates_by_index)
-            if correction:
-                selected_id = correction['interface_id']
-                candidate = by_id.get(selected_id)
-                confidence = correction['confidence']
-                reason = correction['reason']
-            if candidate:
-                candidate = {
-                    **candidate,
-                    'llm_confidence': confidence,
-                    'llm_reason': reason,
-                }
-            matches.append({
-                'step_index': item.get('step_index'),
-                'selected_interface_id': selected_id,
-                'selected_interface': candidate,
-                'confidence': confidence,
-                'reason': reason,
+            steps_for_prompt.extend(
+                s for s in [item] if s.get('index') is not None
+            )
+
+        # Build prompt steps from original step data
+        prompt_steps = []
+        for item, _ in llm_needed:
+            prompt_steps.append({
+                'index': item.get('step_index'),
+                'text': item.get('step_text'),
+                'resolved_text': item.get('resolved_text'),
             })
-        return matches, {'provider': result['provider'], 'model': result['model']}
+
+        messages = build_messages(prompt_steps, compact)
+        try:
+            result = self.llm.chat_json(messages, temperature=0.1)
+            provider_info = {'provider': result['provider'], 'model': result['model']}
+            data = validate_interface_match(result['data'])
+        except Exception as exc:
+            logger.warning(f'[InterfaceMatcher] batch LLM failed: {exc}, falling back to per-step')
+            return self._fallback_per_step_llm(llm_needed)
+
+        # Index LLM results by step_index
+        step_matches = {}
+        for match_item in data.get('matches', []):
+            si = match_item.get('step_index')
+            if si is not None:
+                step_matches[si] = match_item
+
+        return {
+            'provider_info': provider_info,
+            'step_matches': step_matches,
+        }
+
+    def _fallback_per_step_llm(self, llm_needed):
+        """Fallback: call LLM per-step if batch call fails."""
+        step_matches = {}
+        provider_info = {'provider': 'unknown', 'model': 'unknown'}
+        for item, step_candidates in llm_needed:
+            step_index = item['step_index']
+            compact_single = [{
+                'step_index': step_index,
+                'step_text': item.get('step_text'),
+                'resolved_text': item.get('resolved_text'),
+                'candidates': step_candidates,
+            }]
+            single_step = [{
+                'index': step_index,
+                'text': item.get('step_text'),
+                'resolved_text': item.get('resolved_text'),
+            }]
+            try:
+                result = self.llm.chat_json(
+                    build_messages(single_step, compact_single),
+                    temperature=0.1,
+                )
+                provider_info = {'provider': result['provider'], 'model': result['model']}
+                data = validate_interface_match(result['data'])
+                for match_item in data.get('matches', []):
+                    if match_item.get('step_index') == step_index:
+                        step_matches[step_index] = match_item
+                        break
+            except Exception:
+                pass
+        return {
+            'provider_info': provider_info,
+            'step_matches': step_matches,
+        }
+
+    # ------------------------------------------------------------------
+    # Fast name match
+    # ------------------------------------------------------------------
+
+    def _try_fast_name_match(self, step_index, item, candidates):
+        """If a candidate's name strongly matches the step, skip LLM entirely."""
+        best_candidate = None
+        best_strength = 0.0
+        for candidate in candidates:
+            strength = self._name_match_strength(candidate)
+            if strength > best_strength:
+                best_strength = strength
+                best_candidate = candidate
+
+        if not best_candidate or best_strength < self.FAST_MATCH_NAME_THRESHOLD:
+            return None
+
+        confidence = max(0.80, min(0.95, best_strength))
+        return {
+            'step_index': step_index,
+            'selected_interface_id': best_candidate['interface_id'],
+            'selected_interface': {
+                **best_candidate,
+                'llm_confidence': confidence,
+                'llm_reason': '名称快速匹配：接口名称与步骤文本高度匹配，跳过LLM推理',
+            },
+            'confidence': confidence,
+            'reason': '名称快速匹配：接口名称与步骤文本高度匹配，跳过LLM推理',
+        }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _candidate_map(self, candidates_by_step):
         result = {}

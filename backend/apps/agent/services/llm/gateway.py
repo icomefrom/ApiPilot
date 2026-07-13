@@ -45,5 +45,6 @@ class LLMGateway:
         providers = []
         if self.primary.is_configured():
             providers.append(self.primary)
-        providers.append(self.fallback)
+        if self.fallback.is_configured():
+            providers.append(self.fallback)
         return providers

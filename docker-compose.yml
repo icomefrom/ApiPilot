@@ -57,7 +57,7 @@ services:
       - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-admin@example.com}
       - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-admin123}
       - LOAD_SAMPLE_DATA=${LOAD_SAMPLE_DATA:-True}
-      - AGENT_LLM_TIMEOUT=${AGENT_LLM_TIMEOUT:-60}
+      - AGENT_LLM_TIMEOUT=${AGENT_LLM_TIMEOUT:-300}
       - AGENT_OPENAI_BASE_URL=${AGENT_OPENAI_BASE_URL:-}
       - AGENT_OPENAI_API_KEY=${AGENT_OPENAI_API_KEY:-}
       - AGENT_OPENAI_MODEL=${AGENT_OPENAI_MODEL:-}
@@ -74,7 +74,7 @@ services:
     command: >
       sh -c "python manage.py migrate &&
              python scripts/init_data.py &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout 30"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-1} --timeout ${GUNICORN_TIMEOUT:-600}"
 
   frontend:
     build:

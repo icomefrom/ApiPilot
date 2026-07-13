@@ -1,3 +1,5 @@
+import json
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -307,6 +309,36 @@ class ApiInterfaceViewSet(ProjectScopedMixin, viewsets.ModelViewSet):
             if not project or not can_edit(request.user, project):
                 return Response({'detail': '没有项目编辑权限'}, status=status.HTTP_403_FORBIDDEN)
             result = import_postman_collection(collection, request.user, project=project)
+            return Response(result)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], url_path='import-openapi')
+    def import_openapi(self, request):
+        """导入 OpenAPI 3.x / Swagger 2.0 规范（JSON 或 YAML）"""
+        spec_data = request.data.get('spec')
+        if not spec_data:
+            return Response({'detail': '缺少 spec 数据'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if isinstance(spec_data, str):
+            try:
+                import yaml as yaml_lib
+                spec_data = yaml_lib.safe_load(spec_data)
+            except Exception:
+                try:
+                    spec_data = json.loads(spec_data)
+                except json.JSONDecodeError:
+                    return Response({'detail': 'spec 格式无效，需要 JSON 或 YAML'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not isinstance(spec_data, dict):
+            return Response({'detail': 'spec 必须是 JSON/YAML 对象'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .openapi_parser import import_openapi_spec
+        try:
+            project = self.get_current_project()
+            if not project or not can_edit(request.user, project):
+                return Response({'detail': '没有项目编辑权限'}, status=status.HTTP_403_FORBIDDEN)
+            result = import_openapi_spec(spec_data, request.user, project=project)
             return Response(result)
         except ValueError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
