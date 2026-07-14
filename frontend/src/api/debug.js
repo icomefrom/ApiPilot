@@ -50,6 +50,13 @@ export const debugApi = {
     })
   },
 
+  // OpenAPI / Swagger 导入
+  importOpenApi(spec) {
+    return request.post('/api/debug/interfaces/import-openapi/', { spec }, {
+      timeout: 60000,
+    })
+  },
+
   // 分组 CRUD
   getGroups(params) {
     return request.get('/api/debug/groups/', { params })

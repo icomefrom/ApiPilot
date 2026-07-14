@@ -125,7 +125,7 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 # Agent LLM
-AGENT_LLM_TIMEOUT = int(os.environ.get('AGENT_LLM_TIMEOUT', '60'))
+AGENT_LLM_TIMEOUT = int(os.environ.get('AGENT_LLM_TIMEOUT', '180'))
 AGENT_OPENAI_BASE_URL = os.environ.get('AGENT_OPENAI_BASE_URL', '')
 AGENT_OPENAI_API_KEY = os.environ.get('AGENT_OPENAI_API_KEY', '')
 AGENT_OPENAI_MODEL = os.environ.get('AGENT_OPENAI_MODEL', '')

@@ -5,9 +5,22 @@
       <div class="panel-header">
         <span class="panel-title">{{ t('接口列表') }}</span>
         <div class="panel-actions">
-          <a-button size="small" @click="openPostmanImport">
-            <ImportOutlined /> {{ t('导入') }}
-          </a-button>
+          <a-dropdown>
+            <template #overlay>
+              <a-menu>
+                <a-menu-item key="postman" @click="openPostmanImport">
+                  导入 Postman Collection
+                </a-menu-item>
+                <a-menu-item key="openapi" @click="openOpenApiImport">
+                  导入 OpenAPI / Swagger
+                </a-menu-item>
+              </a-menu>
+            </template>
+            <a-button size="small">
+              <ImportOutlined /> {{ t('导入') }}
+              <DownOutlined />
+            </a-button>
+          </a-dropdown>
           <a-button size="small" @click="handleNewGroup">
             <PlusOutlined /> {{ t('新建分组') }}
           </a-button>
@@ -41,6 +54,9 @@
     <!-- Postman 导入弹窗 -->
     <PostmanImport ref="postmanImportRef" @imported="onPostmanImported" />
 
+    <!-- OpenAPI 导入弹窗 -->
+    <OpenApiImport ref="openApiImportRef" @imported="onOpenApiImported" />
+
     <!-- 断言校验抽屉 -->
     <a-drawer
       v-model:open="assertionDrawerVisible"
@@ -57,12 +73,13 @@
 <script setup>
 import { ref, computed, h, onMounted, onBeforeUnmount } from 'vue'
 import { Modal, message } from 'ant-design-vue'
-import { PlusOutlined, ImportOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, ImportOutlined, SafetyCertificateOutlined, DownOutlined } from '@ant-design/icons-vue'
 import { useDebugStore } from '../../stores/debug'
 import InterfaceList from './InterfaceList.vue'
 import InterfaceForm from './InterfaceForm.vue'
 import CurlImport from './CurlImport.vue'
 import PostmanImport from './PostmanImport.vue'
+import OpenApiImport from './OpenApiImport.vue'
 import ResponseViewer from './ResponseViewer.vue'
 import AssertionPanel from './AssertionPanel.vue'
 import { t } from '../../i18n'
@@ -70,6 +87,7 @@ import { t } from '../../i18n'
 const store = useDebugStore()
 const curlImportRef = ref(null)
 const postmanImportRef = ref(null)
+const openApiImportRef = ref(null)
 const interfaceFormRef = ref(null)
 const assertionDrawerVisible = ref(false)
 const assertionSummary = ref({ total: 0, pass: 0, fail: 0 })
@@ -98,7 +116,16 @@ function openPostmanImport() {
   postmanImportRef.value?.open()
 }
 
+function openOpenApiImport() {
+  openApiImportRef.value?.open()
+}
+
 function onPostmanImported() {
+  store.fetchInterfaces()
+  store.fetchGroups()
+}
+
+function onOpenApiImported() {
   store.fetchInterfaces()
   store.fetchGroups()
 }

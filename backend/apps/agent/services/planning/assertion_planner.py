@@ -41,16 +41,32 @@ class AssertionPlanner:
         self.llm = llm
 
     def plan(self, steps, matches, dependency_plan=None, response_samples=None, goal='', assertion_intents=None):
+        """Full assertion planning: model call + merge (backward compatible)."""
+        intents_by_step = self._assertion_intents_by_step(assertion_intents or [])
+        model_assertions, model_trace = self._model_assertions(goal, steps, matches, response_samples, intents_by_step)
+        return self.merge_assertions(
+            steps, matches, dependency_plan=dependency_plan, response_samples=response_samples,
+            model_assertions=model_assertions, assertion_intents=assertion_intents,
+        ), model_trace
+
+    def start_model_assertions(self, goal, steps, matches, response_samples, assertion_intents=None):
+        """Phase 1: LLM call — does NOT depend on dependency_plan, can run in parallel."""
+        intents_by_step = self._assertion_intents_by_step(assertion_intents or [])
+        return self._model_assertions(goal, steps, matches, response_samples, intents_by_step)
+
+    def merge_assertions(self, steps, matches, dependency_plan=None, response_samples=None,
+                         model_assertions=None, assertion_intents=None):
+        """Phase 2: merge model assertions with rule-based ones (no LLM)."""
+        model_assertions = model_assertions or []
         match_by_step = {item.get('step_index'): item for item in matches or []}
         mappings = dependency_plan.get('mappings', []) if dependency_plan else []
         response_samples = response_samples or {}
         intents_by_step = self._assertion_intents_by_step(assertion_intents or [])
-        result = []
-        model_assertions, model_trace = self._model_assertions(goal, steps, matches, response_samples, intents_by_step)
         model_by_step = {}
         for assertion in model_assertions:
             model_by_step.setdefault(assertion.get('step_index'), []).append(assertion)
 
+        result = []
         for step in steps or []:
             step_index = step.get('index')
             match = match_by_step.get(step_index) or {}
@@ -85,7 +101,7 @@ class AssertionPlanner:
                 'interface_name': interface.get('name') or interface.get('url') or '',
                 'assertions': assertions,
             })
-        return result, model_trace
+        return result
 
     def _base_assertions(self, sample):
         evidence = {
