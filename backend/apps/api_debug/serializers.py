@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Q
 from apps.authentication.models import User
-from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, Project, ProjectMember
+from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, Project, ProjectMember, MockRule
 
 
 class ProjectMemberSerializer(serializers.ModelSerializer):
@@ -326,6 +326,26 @@ class ChainResultSerializer(serializers.ModelSerializer):
             'created_by',
         ]
         read_only_fields = fields
+
+
+# ============ Mock 规则序列化器 ============
+
+
+class MockRuleSerializer(serializers.ModelSerializer):
+    """Mock 规则序列化器"""
+    interface_name = serializers.CharField(source='interface.name', default='', read_only=True)
+    interface_method = serializers.CharField(source='interface.method', default='', read_only=True)
+    interface_url = serializers.CharField(source='interface.url', default='', read_only=True)
+
+    class Meta:
+        model = MockRule
+        fields = [
+            'id', 'interface', 'interface_name', 'interface_method', 'interface_url',
+            'enabled', 'status_code', 'response_headers', 'response_body',
+            'delay_ms', 'scenario', 'content_type', 'response_mode',
+            'created_by', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
 
 
 # ============ 测试接口序列化器 ============

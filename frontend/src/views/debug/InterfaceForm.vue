@@ -100,6 +100,11 @@
           </a-form-item>
         </a-form>
       </a-tab-pane>
+
+      <!-- Mock Tab -->
+      <a-tab-pane key="mock" :tab="t('Mock 设置')">
+        <MockPanel :interface-id="store.currentInterface.id" />
+      </a-tab-pane>
     </a-tabs>
 
     <!-- 保存按钮 -->
@@ -138,6 +143,7 @@ import { useDebugStore } from '../../stores/debug'
 import { useEnvironmentStore } from '../../stores/environment'
 import { t } from '../../i18n'
 import KeyValuePair from './KeyValuePair.vue'
+import MockPanel from './MockPanel.vue'
 
 const emit = defineEmits(['saved', 'importCurl'])
 const store = useDebugStore()

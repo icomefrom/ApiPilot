@@ -280,6 +280,37 @@
               <a-input-number v-model:value="node.data.retry_interval" :min="0.5" :max="60" :step="0.5" style="width: 80px" @change="emitChange" />
             </a-form-item>
           </a-form>
+          <!-- Mock 状态与开关 -->
+          <div class="mock-config-row">
+            <div class="mock-status-line">
+              <span class="mock-status-label">{{ t('Mock 规则') }}:</span>
+              <template v-if="interfaceMockRule?.enabled">
+                <span class="mock-status-badge mock-enabled">{{ t('已配置且启用') }}</span>
+              </template>
+              <template v-else-if="interfaceMockRule">
+                <span class="mock-status-badge mock-disabled">{{ t('已配置但未启用') }}</span>
+              </template>
+              <template v-else>
+                <span class="mock-status-badge mock-none">{{ t('未配置') }}</span>
+              </template>
+              <a-button type="link" size="small" class="mock-refresh-btn" @click="loadMockStatus(node.data.interfaceId)" :loading="mockLoading">
+                <template #icon><ReloadOutlined /></template>
+                {{ t('刷新') }}
+              </a-button>
+            </div>
+            <div class="mock-ignore-line" v-if="interfaceMockRule?.enabled">
+              <a-switch v-model:checked="node.data.ignore_mock" @change="emitChange" size="small" />
+              <span class="mock-ignore-hint">
+                {{ node.data.ignore_mock ? t('该节点将跳过 Mock，发送真实请求') : t('该节点将使用 Mock 响应') }}
+              </span>
+            </div>
+            <div class="mock-ignore-line" v-else-if="interfaceMockRule && !interfaceMockRule.enabled">
+              <span class="mock-hint-text">{{ t('启用 Mock 规则后，可在此控制是否跳过') }}</span>
+            </div>
+            <div class="mock-ignore-line" v-else>
+              <span class="mock-hint-text">{{ t('请先在调试页为该接口配置 Mock 规则') }}</span>
+            </div>
+          </div>
         </div>
       </template>
 
@@ -505,11 +536,12 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { Empty } from 'ant-design-vue'
-import { PlusOutlined, DeleteOutlined, QuestionCircleOutlined, DollarOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DeleteOutlined, QuestionCircleOutlined, DollarOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 
 // 变量插入图标组件
 const VarDirectiveOutlined = DollarOutlined
 import { debugApi } from '../../api/debug'
+import { mockApi } from '../../api/mock'
 import JsonPathPicker from '../debug/JsonPathPicker.vue'
 import KeyPicker from './KeyPicker.vue'
 import { t, translateText } from '../../i18n'
@@ -529,6 +561,8 @@ const emit = defineEmits(['update:visible', 'change'])
 const interfaces = ref([])
 const lastExecuteResult = ref(null)
 const selectedInterface = ref(null)
+const interfaceMockRule = ref(null)  // 当前接口的 Mock 规则
+const mockLoading = ref(false)  // Mock 规则加载状态
 const bodyEditMode = ref('kv')  // 'kv' | 'textarea'
 const showRespHeaders = ref(false)
 const showRespBody = ref(true)
@@ -682,6 +716,24 @@ const stepResult = computed(() => {
   return result
 })
 
+// 加载当前接口的 Mock 规则状态
+async function loadMockStatus(interfaceId) {
+  if (!interfaceId) {
+    interfaceMockRule.value = null
+    return
+  }
+  mockLoading.value = true
+  try {
+    const res = await mockApi.getMockRuleByInterface(interfaceId)
+    const rules = res.results || res
+    interfaceMockRule.value = rules.length ? rules[0] : null
+  } catch {
+    interfaceMockRule.value = null
+  } finally {
+    mockLoading.value = false
+  }
+}
+
 // 加载接口列表
 async function loadInterfaces() {
   try {
@@ -698,6 +750,7 @@ watch(() => props.visible, async (v) => {
       try {
         const detail = await debugApi.getInterface(props.node.data.interface_id)
         selectedInterface.value = detail
+        await loadMockStatus(props.node.data.interface_id)
         if (!props.node.data.overrides || Object.keys(props.node.data.overrides).length <= 1) {
           if (!props.node.data.overrides) props.node.data.overrides = {}
           initOverrideKv('headers', detail.headers || {})
@@ -711,6 +764,7 @@ watch(() => props.visible, async (v) => {
       } catch { /* ignore */ }
     } else {
       selectedInterface.value = null
+      interfaceMockRule.value = null
     }
   }
 })
@@ -719,12 +773,14 @@ watch(() => props.visible, async (v) => {
 watch(() => props.node?.id, async (newId, oldId) => {
   if (!props.visible || newId === oldId) return
   selectedInterface.value = null
+  interfaceMockRule.value = null
   bodyEditMode.value = 'kv'
   if (props.node?.data?.interface_id) {
     try {
       const detail = await debugApi.getInterface(props.node.data.interface_id)
       if (props.node?.data?.interface_id !== detail.id) return  // 防过期
       selectedInterface.value = detail
+      await loadMockStatus(props.node.data.interface_id)
     } catch { /* ignore */ }
   }
 })
@@ -736,6 +792,7 @@ async function onInterfaceSelect(val) {
     const detail = await debugApi.getInterface(val)
     if (props.node?.data?.interface_id !== fetchId) return  // 防过期响应
     selectedInterface.value = detail
+    await loadMockStatus(val)
     props.node.data.interface_name = `${detail.method} ${detail.name}`
     if (!props.node.data.label || props.node.data.label === '接口节点') {
       props.node.data.label = detail.name
@@ -1164,5 +1221,68 @@ function emitChange() {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Mock 状态区域 */
+.mock-config-row {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+}
+.mock-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mock-status-label {
+  font-size: 12px;
+  color: #595959;
+  font-weight: 500;
+}
+.mock-status-badge {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+.mock-enabled {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+.mock-disabled {
+  background: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
+}
+.mock-none {
+  background: #f5f5f5;
+  color: #8c8c8c;
+  border: 1px solid #d9d9d9;
+}
+.mock-ignore-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mock-ignore-hint {
+  font-size: 12px;
+  color: #595959;
+}
+.mock-hint-text {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.mock-refresh-btn {
+  font-size: 12px;
+  padding: 0 4px;
+  height: auto;
+  line-height: 1;
 }
 </style>

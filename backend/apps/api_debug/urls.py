@@ -10,6 +10,7 @@ router.register(r'results', views.DebugResultViewSet, basename='debug-result')
 router.register(r'chains', views.ChainViewSet, basename='chain')
 router.register(r'chain-results', views.ChainResultViewSet, basename='chain-result')
 router.register(r'environments', views.EnvironmentViewSet, basename='environment')
+router.register(r'mock-rules', views.MockRuleViewSet, basename='mock-rule')
 
 urlpatterns = [
     path('test-post/', views.test_post, name='test-post'),

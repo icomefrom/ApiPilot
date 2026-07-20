@@ -7,6 +7,7 @@
     <div class="node-body" v-if="data.interface_id">
       <span class="node-meta">{{ data.interface_name || `ID: ${data.interface_id}` }}</span>
       <span v-if="data.retry_count > 0" class="node-retry-badge">重试x{{ data.retry_count }}</span>
+      <span v-if="data._is_mock" class="node-mock-badge">Mock</span>
     </div>
     <Handle type="target" :position="Position.Left" />
     <Handle type="source" :position="Position.Right" id="out" />
@@ -70,6 +71,19 @@ const nodeStatusClass = computed(() => {
   background: #fff7e6;
   color: #d46b08;
   border: 1px solid #ffd591;
+}
+.node-mock-badge {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 4px;
+  margin-top: 2px;
+  margin-left: 4px;
+  border-radius: 3px;
+  background: #f9f0ff;
+  color: #722ed1;
+  border: 1px solid #d3adf7;
+  font-weight: 600;
 }
 .node-success { border-color: #52c41a; }
 .node-failed { border-color: #ff4d4f; }

@@ -166,10 +166,41 @@ function handleEdgesUpdate(newEdges) {
 }
 
 function validateBoundaryNodes() {
-  const startCount = store.currentChain.nodes.filter(n => n.type === 'start').length
-  const endCount = store.currentChain.nodes.filter(n => n.type === 'end').length
-  if (startCount !== 1 || endCount !== 1) {
+  const nodes = store.currentChain.nodes
+  const edges = store.currentChain.edges
+  const startNodes = nodes.filter(n => n.type === 'start')
+  const endNodes = nodes.filter(n => n.type === 'end')
+  if (startNodes.length !== 1 || endNodes.length !== 1) {
     message.warning(t('链路必须且只能包含一个开始节点和一个结束节点'))
+    return false
+  }
+  // 检查开始节点是否有出边
+  const startId = startNodes[0].id
+  const hasOutgoing = edges.some(e => e.source === startId)
+  if (!hasOutgoing) {
+    message.warning(t('开始节点未连接后续节点，请连线后再保存'))
+    return false
+  }
+  // 检查从开始节点能否到达结束节点（BFS）
+  const adjacency = {}
+  for (const n of nodes) adjacency[n.id] = []
+  for (const e of edges) {
+    if (adjacency[e.source]) adjacency[e.source].push(e.target)
+  }
+  const visited = new Set()
+  const queue = [startId]
+  visited.add(startId)
+  while (queue.length) {
+    const cur = queue.shift()
+    for (const next of adjacency[cur] || []) {
+      if (!visited.has(next)) {
+        visited.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  if (!visited.has(endNodes[0].id)) {
+    message.warning(t('开始节点无法到达结束节点，请检查连线'))
     return false
   }
   return true

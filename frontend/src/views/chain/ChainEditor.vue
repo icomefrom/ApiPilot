@@ -139,13 +139,14 @@ watch(() => props.edges, (newEdges) => {
   }))
 }, { immediate: true, deep: true })
 
-// 执行结果 → 节点颜色
+// 执行结果 → 节点颜色 + Mock 标识
 watch(() => props.result, (result) => {
   if (!result?.step_results) return
   flowNodes.value = flowNodes.value.map(node => {
     const step = result.step_results.find(s => s.node_id === node.id)
     const status = step ? step.status : 'skipped'
-    return { ...node, data: { ...node.data, _status: status } }
+    const isMock = step?.is_mock === true
+    return { ...node, data: { ...node.data, _status: status, _is_mock: isMock } }
   })
 }, { deep: true })
 

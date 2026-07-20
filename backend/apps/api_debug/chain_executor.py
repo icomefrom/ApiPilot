@@ -485,6 +485,30 @@ def _execute_interface_node(node_data, vars_pool, step_result, env_context=None)
         step_result['error'] = f'接口不存在: {interface_id}'
         return step_result
 
+    # ★ Mock 拦截：检查接口是否配置了启用的 Mock 规则（支持 ignore_mock 节点级覆盖）
+    if not node_data.get('ignore_mock', False):
+        from .mock_engine import resolve_mock
+        mock_resp = resolve_mock(interface)
+        if mock_resp:
+            # 模板/回显模式：替换变量
+            mock_body = mock_resp.body
+            if '{{' in mock_body:
+                env_context = env_context or _build_env_context(None)
+                mock_body = _deep_replace_vars(mock_body, vars_pool, env_context.get('vars', {}))
+
+            step_result['response'] = {
+                'status_code': mock_resp.status_code,
+                'headers': mock_resp.headers,
+                'body': mock_body[:MAX_CHAIN_STEP_BODY_SIZE],
+                'elapsed_ms': 0,
+                'status': 'success',
+                'error_message': '',
+            }
+            step_result['is_mock'] = True
+            step_result['elapsed_ms'] = 0
+            # 继续走提取/断言逻辑（使用 Mock 响应）
+            return _post_process_response(step_result, node_data, vars_pool)
+
     # 构建执行参数（基于接口定义 + 覆盖）
     overrides = node_data.get('overrides', {})
     exec_data = {
@@ -960,4 +984,58 @@ def _condition_script(node_data, vars_pool, step_result, last_response):
         'output': result.get('output', ''),
         'result': condition_result,
     }
+    return step_result
+
+
+def _post_process_response(step_result, node_data, vars_pool):
+    """对响应执行提取规则和断言（Mock 和真实响应共用）"""
+    resp_info = step_result.get('response')
+    if not resp_info:
+        return step_result
+
+    try:
+        response_wrapper = {
+            'status_code': resp_info['status_code'],
+            'elapsed_ms': resp_info.get('elapsed_ms', 0),
+            'headers': resp_info.get('headers', {}),
+            'body': json.loads(resp_info['body']) if resp_info.get('body') else None,
+        }
+    except (json.JSONDecodeError, TypeError):
+        response_wrapper = {
+            'status_code': resp_info['status_code'],
+            'elapsed_ms': resp_info.get('elapsed_ms', 0),
+            'headers': resp_info.get('headers', {}),
+            'body': resp_info.get('body'),
+        }
+
+    # 执行提取规则
+    extractions = node_data.get('extractions', [])
+    extraction_results = []
+    for ext in extractions:
+        var_name = ext.get('var_name', '')
+        jsonpath = ext.get('jsonpath', '')
+        if not var_name or not jsonpath:
+            continue
+        value = _extract_jsonpath(response_wrapper, jsonpath)
+        vars_pool['vars'][var_name] = value
+        extraction_results.append({
+            'var_name': var_name,
+            'jsonpath': jsonpath,
+            'value': value,
+        })
+    step_result['extractions'] = extraction_results
+
+    # 执行断言（JSONPath + 脚本）
+    assertions = node_data.get('assertions', [])
+    if assertions:
+        jsonpath_results = _run_assertions_jsonpath(assertions, response_wrapper)
+        script_results = _run_assertions_script(assertions, response_wrapper, vars_pool)
+        all_assertion_results = jsonpath_results + script_results
+        step_result['assertion_results'] = all_assertion_results
+        if any(not a['pass'] for a in all_assertion_results):
+            step_result['status'] = 'failed'
+            step_result['error'] = '断言失败'
+            return step_result
+
+    step_result['status'] = 'success'
     return step_result
