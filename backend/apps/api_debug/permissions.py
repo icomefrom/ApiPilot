@@ -64,6 +64,8 @@ class ProjectResourcePermission(permissions.BasePermission):
         project = getattr(obj, 'project', None)
         if project is None and hasattr(obj, 'chain'):
             project = getattr(obj.chain, 'project', None)
+        if project is None and hasattr(obj, 'interface'):
+            project = getattr(obj.interface, 'project', None)
         if request.method in permissions.SAFE_METHODS:
             return can_view(request.user, project)
         if getattr(view, 'action', None) in {'execute'}:

@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
-from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, Project, ProjectMember
+from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, Project, ProjectMember, MockRule
 from .serializers import (
     ApiGroupSerializer,
     ApiInterfaceListSerializer,
@@ -21,6 +21,7 @@ from .serializers import (
     ProjectMemberSerializer,
     ProjectMemberInviteSerializer,
     ProjectMemberRoleSerializer,
+    MockRuleSerializer,
     TestPostSerializer,
 )
 from .curl_parser import parse_curl_command
@@ -346,11 +347,42 @@ class ChainViewSet(ProjectScopedMixin, viewsets.ModelViewSet):
         """执行链路（支持 environment_id）"""
         chain = self.get_object()
         nodes = chain.nodes or []
-        start_count = sum(1 for node in nodes if isinstance(node, dict) and node.get('type') == 'start')
-        end_count = sum(1 for node in nodes if isinstance(node, dict) and node.get('type') == 'end')
-        if start_count != 1 or end_count != 1:
+        edges = chain.edges or []
+        start_nodes = [n for n in nodes if isinstance(n, dict) and n.get('type') == 'start']
+        end_nodes = [n for n in nodes if isinstance(n, dict) and n.get('type') == 'end']
+        if len(start_nodes) != 1 or len(end_nodes) != 1:
             return Response(
                 {'detail': '链路必须且只能包含一个开始节点和一个结束节点'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # 检查开始节点是否有出边
+        start_id = start_nodes[0]['id']
+        has_outgoing = any(e.get('source') == start_id for e in edges)
+        if not has_outgoing:
+            return Response(
+                {'detail': '开始节点未连接后续节点'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # BFS 检查从开始节点能否到达结束节点
+        adjacency = {n['id']: [] for n in nodes if isinstance(n, dict)}
+        for e in edges:
+            src = e.get('source')
+            tgt = e.get('target')
+            if src in adjacency:
+                adjacency[src].append(tgt)
+        visited = set()
+        queue = [start_id]
+        visited.add(start_id)
+        while queue:
+            cur = queue.pop(0)
+            for nxt in adjacency.get(cur, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        end_id = end_nodes[0]['id']
+        if end_id not in visited:
+            return Response(
+                {'detail': '开始节点无法到达结束节点，请检查连线'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         env_vars = None
@@ -377,6 +409,31 @@ class ChainResultViewSet(viewsets.ReadOnlyModelViewSet):
         if chain_id:
             qs = qs.filter(chain_id=chain_id)
         return qs
+
+
+class MockRuleViewSet(ProjectScopedMixin, viewsets.ModelViewSet):
+    """Mock 规则 CRUD"""
+    serializer_class = MockRuleSerializer
+    permission_classes = [IsAuthenticated, ProjectResourcePermission]
+
+    def get_queryset(self):
+        project = self.get_current_project()
+        projects = get_user_projects(self.request.user)
+        if project:
+            qs = MockRule.objects.filter(interface__project=project)
+        else:
+            qs = MockRule.objects.filter(interface__project__in=projects)
+        qs = qs.select_related('interface')
+        interface_id = self.request.query_params.get('interface_id')
+        if interface_id:
+            qs = qs.filter(interface_id=interface_id)
+        enabled = self.request.query_params.get('enabled')
+        if enabled is not None:
+            qs = qs.filter(enabled=enabled.lower() == 'true')
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
 
 # ============ 测试接口 ============

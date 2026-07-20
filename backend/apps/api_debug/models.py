@@ -257,6 +257,54 @@ class Environment(models.Model):
         return self.name
 
 
+class MockRule(models.Model):
+    """接口级 Mock 规则 — 一对一绑定 ApiInterface"""
+    interface = models.OneToOneField(
+        ApiInterface, on_delete=models.CASCADE,
+        related_name='mock_rule', verbose_name='关联接口',
+    )
+    enabled = models.BooleanField('启用', default=True)
+    status_code = models.IntegerField('响应状态码', default=200)
+    response_headers = models.JSONField('响应头', default=dict, blank=True)
+    response_body = models.TextField('响应体', blank=True, default='{}')
+    delay_ms = models.IntegerField('模拟延迟(ms)', default=0)
+    scenario = models.CharField('场景标签', max_length=50, blank=True, default='default')
+    content_type = models.CharField(
+        'Content-Type', max_length=100,
+        blank=True, default='application/json',
+    )
+
+    RESPONSE_MODE_STATIC = 'static'
+    RESPONSE_MODE_ECHO = 'echo'
+    RESPONSE_MODE_TEMPLATE = 'template'
+    RESPONSE_MODE_CHOICES = [
+        (RESPONSE_MODE_STATIC, '静态响应'),
+        (RESPONSE_MODE_ECHO, '回显请求'),
+        (RESPONSE_MODE_TEMPLATE, '模板响应'),
+    ]
+    response_mode = models.CharField(
+        '响应模式', max_length=20,
+        choices=RESPONSE_MODE_CHOICES,
+        default=RESPONSE_MODE_STATIC,
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='mock_rules', verbose_name='创建人',
+    )
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'api_debug_mock_rule'
+        verbose_name = 'Mock 规则'
+        verbose_name_plural = verbose_name
+        ordering = ['-id']
+
+    def __str__(self):
+        return f'Mock({self.status_code}) → {self.interface}'
+
+
 class DebugResult(models.Model):
     """调试执行结果"""
     project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True, blank=True,

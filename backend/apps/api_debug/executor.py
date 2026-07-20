@@ -530,6 +530,17 @@ def execute_rpc(url, rpc_method, rpc_service='', headers=None, body='',
 
 def execute_interface(interface, user, env_vars=None):
     """执行已保存的接口。环境为空时保持原请求行为。"""
+    # ★ Mock 拦截：检查接口是否配置了启用的 Mock 规则
+    from .mock_engine import resolve_mock
+    mock_resp = resolve_mock(interface)
+    if mock_resp:
+        return _build_result(
+            interface, interface.protocol, interface.url, interface.method,
+            interface.headers, interface.body,
+            mock_resp.status_code, mock_resp.headers, mock_resp.body,
+            0, 'success', '', user,
+        )
+
     env_context = _build_env_context(env_vars)
     env_dict = env_context['vars']
 
