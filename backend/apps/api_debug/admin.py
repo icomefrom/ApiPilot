@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, Project, ProjectMember
+from .models import ApiGroup, ApiInterface, DebugResult, Chain, ChainResult, Environment, MockRule, Project, ProjectMember
 
 
 class ProjectMemberInline(admin.TabularInline):
@@ -61,3 +61,11 @@ class DebugResultAdmin(admin.ModelAdmin):
                     'status_code', 'status', 'elapsed_ms', 'created_at']
     list_filter = ['project', 'protocol', 'status', 'created_at']
     search_fields = ['request_url']
+
+
+@admin.register(MockRule)
+class MockRuleAdmin(admin.ModelAdmin):
+    list_display = ['interface', 'enabled', 'status_code', 'response_mode', 'delay_ms', 'scenario', 'created_at']
+    list_filter = ['enabled', 'response_mode', 'created_at']
+    search_fields = ['interface__name', 'scenario']
+    raw_id_fields = ['interface']
